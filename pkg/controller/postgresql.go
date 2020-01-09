@@ -508,6 +508,10 @@ func (c *Controller) submitRBACCredentials(event ClusterEvent) error {
 		return fmt.Errorf("could not create pod service account %v : %v", c.opConfig.PodServiceAccountName, err)
 	}
 
+	if err := c.createRole(namespace); err != nil {
+		return fmt.Errorf("could not create role %v : %v", c.PodServiceAccountRole.Name, err)
+	}
+
 	if err := c.createRoleBindings(namespace); err != nil {
 		return fmt.Errorf("could not create role binding %v : %v", c.PodServiceAccountRoleBinding.Name, err)
 	}
@@ -537,6 +541,32 @@ func (c *Controller) createPodServiceAccount(namespace string) error {
 	return err
 }
 
+func (c *Controller) createRole(namespace string) error {
+
+	podServiceAccountRoleName := c.PodServiceAccountRole.Name
+
+	_, err := c.KubeClient.Roles(namespace).Get(podServiceAccountRoleName, metav1.GetOptions{})
+	if k8sutil.ResourceNotFound(err) {
+
+		c.logger.Infof("creating role %v in the namespace %v", podServiceAccountRoleName, namespace)
+
+		// get a separate copy of the role
+		// to prevent a race condition when setting a namespace for many clusters
+		role := *c.PodServiceAccountRole
+		_, err = c.KubeClient.Roles(namespace).Create(&role)
+		if err != nil {
+			return fmt.Errorf("cannot create role %q in the %q namespace: %v", podServiceAccountRoleName, namespace, err)
+		}
+
+		c.logger.Infof("successfully deployed role %q to the %q namespace", podServiceAccountRoleName, namespace)
+
+	} else if k8sutil.ResourceAlreadyExists(err) {
+		return nil
+	}
+
+	return err
+}
+
 func (c *Controller) createRoleBindings(namespace string) error {
 
 	podServiceAccountName := c.opConfig.PodServiceAccountName
@@ -545,7 +575,7 @@ func (c *Controller) createRoleBindings(namespace string) error {
 	_, err := c.KubeClient.RoleBindings(namespace).Get(podServiceAccountRoleBindingName, metav1.GetOptions{})
 	if k8sutil.ResourceNotFound(err) {
 
-		c.logger.Infof("Creating the role binding %v in the namespace %v", podServiceAccountRoleBindingName, namespace)
+		c.logger.Infof("creating the role binding %v in the namespace %v", podServiceAccountRoleBindingName, namespace)
 
 		// get a separate copy of role binding
 		// to prevent a race condition when setting a namespace for many clusters
